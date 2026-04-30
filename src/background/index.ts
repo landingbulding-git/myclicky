@@ -137,7 +137,7 @@ ${JSON.stringify(payload.elements, null, 2)}
     const contents = [...messageHistory, currentUserMessage];
 
     // Call Gemini API directly (Google AI, not Vertex)
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
     
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -159,27 +159,53 @@ ${JSON.stringify(payload.elements, null, 2)}
       throw new Error(`Gemini API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    setState(CompanionVoiceState.RESPONDING, tabId);
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let fullResponseText = '';
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6);
+            if (dataStr.trim() === '[DONE]') continue;
+            try {
+              const data = JSON.parse(dataStr);
+              const textChunk = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              if (textChunk) {
+                fullResponseText += textChunk;
+                chrome.tabs.sendMessage(tabId, {
+                  type: 'AI_CHUNK',
+                  chunk: textChunk
+                }).catch(() => {});
+              }
+            } catch (e) {
+              console.error('Error parsing stream chunk:', e);
+            }
+          }
+        }
+      }
+    }
     
-    console.log('Received response from Gemini:', responseText);
+    console.log('Finished stream from Gemini:', fullResponseText);
     
     // Update history
     messageHistory.push({ role: 'user', parts: [{ text: `User Transcript: "${payload.transcript}"` }] }); // Store only transcript to save tokens
-    messageHistory.push({ role: 'model', parts: [{ text: responseText }] });
+    messageHistory.push({ role: 'model', parts: [{ text: fullResponseText }] });
     
     // Memory Limit: 10 items (5 turns)
     if (messageHistory.length > 10) {
       messageHistory = messageHistory.slice(-10);
     }
     
-    setState(CompanionVoiceState.RESPONDING, tabId);
-
-    // 3. Send AI response back to content script for execution and TTS
-    chrome.tabs.sendMessage(tabId, {
-      type: 'EXECUTE_AI_RESPONSE',
-      responseText: responseText
-    });
+    // Send stream done message
+    chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_DONE' }).catch(() => {});
 
   } catch (error: any) {
     console.error('Error processing AI request:', error);

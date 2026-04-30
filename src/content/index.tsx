@@ -229,11 +229,31 @@ if (SpeechRecognitionAPI) {
   };
 }
 
+let aiResponseBuffer = '';
+let fullCleanDisplayText = '';
+
+function speakSentence(text: string) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  window.speechSynthesis.speak(utterance);
+}
+
+function checkSpeechFinished() {
+  if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+    setTimeout(checkSpeechFinished, 500);
+  } else {
+    chrome.runtime.sendMessage({ type: 'INTERACTION_COMPLETE' });
+  }
+}
+
 // --- Background Message Listener ---
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.type === 'START_RECORDING') {
     currentTranscript = '';
     currentInterimTranscript = ''; // Reset interim
+    window.speechSynthesis.cancel(); // Interrupt any ongoing TTS
+    aiResponseBuffer = '';
+    fullCleanDisplayText = '';
     if (recognition) {
       try {
         recognition.start();
@@ -274,50 +294,68 @@ chrome.runtime.onMessage.addListener(async (message) => {
   } else if (message.type === 'EXECUTE_CLICK') {
     highlightElement(message.clickyId);
   } else if (message.type === 'EXECUTE_AI_RESPONSE') {
-    handleAIResponse(message.responseText);
+    // Fallback for non-streaming
+    aiResponseBuffer = message.responseText;
+    chrome.runtime.sendMessage({ type: 'AI_STREAM_DONE' }); // trigger processing
+  } else if (message.type === 'AI_CHUNK') {
+    aiResponseBuffer += message.chunk;
+    
+    // Extract Clicks
+    const clickRegex = /\[CLICK:(el-\d+)(?::(.*?))?\]/g;
+    let match;
+    while ((match = clickRegex.exec(aiResponseBuffer)) !== null) {
+      highlightElement(match[1]);
+      aiResponseBuffer = aiResponseBuffer.replace(match[0], '');
+      clickRegex.lastIndex = 0;
+    }
+
+    // Extract Points (Bonus implementation)
+    const pointRegex = /\[POINT:(\d+),(\d+)(?::(.*?))?\]/g;
+    while ((match = pointRegex.exec(aiResponseBuffer)) !== null) {
+      aiResponseBuffer = aiResponseBuffer.replace(match[0], '');
+      pointRegex.lastIndex = 0;
+    }
+
+    // Find safe text (everything before the last unclosed '[')
+    let safeText = aiResponseBuffer;
+    const lastOpen = aiResponseBuffer.lastIndexOf('[');
+    const lastClose = aiResponseBuffer.lastIndexOf(']');
+    if (lastOpen > lastClose) {
+      safeText = aiResponseBuffer.substring(0, lastOpen);
+    }
+
+    // Extract sentences from safeText
+    const sentenceRegex = /([^\.!?]+[.!?]+)(?=\s|$)/g;
+    let sentenceMatch;
+    let lastIndexProcessed = 0;
+
+    while ((sentenceMatch = sentenceRegex.exec(safeText)) !== null) {
+      const sentence = sentenceMatch[1].trim();
+      if (sentence) {
+        speakSentence(sentence);
+      }
+      lastIndexProcessed = sentenceMatch.index + sentenceMatch[1].length;
+    }
+
+    // Remove spoken sentences from buffer
+    if (lastIndexProcessed > 0) {
+      const spokenPart = safeText.substring(0, lastIndexProcessed);
+      aiResponseBuffer = aiResponseBuffer.substring(lastIndexProcessed);
+      fullCleanDisplayText += spokenPart;
+    }
+    
+    // Update display with fullCleanDisplayText + safeText left
+    let currentDisplay = fullCleanDisplayText + (lastOpen > lastClose ? aiResponseBuffer.substring(0, lastOpen) : aiResponseBuffer);
+    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: currentDisplay.trim() }, '*');
+
+  } else if (message.type === 'AI_STREAM_DONE') {
+    let finalClean = aiResponseBuffer.replace(/\[.*?\]/g, '').trim();
+    if (finalClean) {
+      speakSentence(finalClean);
+      fullCleanDisplayText += finalClean;
+      window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: fullCleanDisplayText.trim() }, '*');
+    }
+    aiResponseBuffer = '';
+    checkSpeechFinished();
   }
 });
-
-// --- Command Execution & TTS Setup ---
-function handleAIResponse(text: string) {
-  const clickRegex = /\[CLICK:(el-\d+)(?::(.*))?\]/g;
-  const pointRegex = /\[POINT:(\d+),(\d+)(?::(.*))?\]/g;
-
-  let cleanText = text;
-  let match;
-
-  // Extract Clicks
-  const clicks: string[] = [];
-  while ((match = clickRegex.exec(text)) !== null) {
-    clicks.push(match[1]);
-    cleanText = cleanText.replace(match[0], '');
-  }
-
-  // Extract Points (Bonus implementation)
-  const points: {x: number, y: number}[] = [];
-  while ((match = pointRegex.exec(text)) !== null) {
-    points.push({ x: parseInt(match[1]), y: parseInt(match[2]) });
-    cleanText = cleanText.replace(match[0], '');
-  }
-
-  cleanText = cleanText.trim();
-  console.log('Cleaned AI Text for TTS:', cleanText);
-
-  // Send cleaned text to overlay
-  window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: cleanText }, '*');
-
-  // Trigger TTS
-  if (cleanText) {
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'en-US';
-    utterance.onend = () => {
-      chrome.runtime.sendMessage({ type: 'INTERACTION_COMPLETE' });
-    };
-    window.speechSynthesis.speak(utterance);
-  } else {
-    chrome.runtime.sendMessage({ type: 'INTERACTION_COMPLETE' });
-  }
-
-  // Execute Highlighting
-  clicks.forEach(id => highlightElement(id));
-}
