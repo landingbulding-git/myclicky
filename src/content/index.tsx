@@ -45,6 +45,28 @@ function injectReactApp() {
     document.body.appendChild(host);
 
     const shadowRoot = host.attachShadow({ mode: 'open' });
+    
+    // Inject Global Styles for Shadow DOM and Document
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes pulse-border {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+      }
+      .clicky-active-target {
+        outline: 4px solid #ef4444 !important;
+        animation: pulse-border 2s infinite !important;
+        transition: outline 0.3s ease-in-out !important;
+      }
+      @keyframes floatUpFade {
+        0% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(-30px); }
+      }
+    `;
+    document.head.appendChild(style.cloneNode(true)); // Add to main doc for highlighted elements
+    shadowRoot.appendChild(style); // Add to shadow root for React components
+
     const appContainer = document.createElement('div');
     shadowRoot.appendChild(appContainer);
 
@@ -77,6 +99,10 @@ window.addEventListener('keydown', (event) => {
     if (!isPTTActive) {
       isPTTActive = true;
       console.log('[Clicky] PTT Start');
+      // Clear previous highlights
+      document.querySelectorAll('.clicky-active-target').forEach(el => {
+        el.classList.remove('clicky-active-target');
+      });
       chrome.runtime.sendMessage({ type: 'PTT_START' });
     }
     event.preventDefault();
@@ -142,26 +168,21 @@ function highlightElement(clickyId: string) {
     return;
   }
 
-  // Highlight effect
-  const originalOutline = el.style.outline;
-  const originalTransition = el.style.transition;
-  const originalBoxShadow = el.style.boxShadow;
-  
-  el.style.transition = 'all 0.3s ease-in-out';
-  el.style.outline = '4px solid #ef4444'; // Red outline
-  el.style.boxShadow = '0 0 15px rgba(239, 68, 68, 0.8)'; // Red glow
-  
+  // Apply persistent highlight
+  el.classList.add('clicky-active-target');
   console.log(`Highlighting element ${clickyId} for the user to click`);
   
-  // Keep it highlighted for 3 seconds to guide the user
-  setTimeout(() => {
-    el.style.outline = originalOutline;
-    el.style.boxShadow = originalBoxShadow;
-    setTimeout(() => {
-      el.style.transition = originalTransition;
-      window.postMessage({ type: 'CLICKY_ACTION_DONE' }, '*');
-    }, 300);
-  }, 3000);
+  // Calculate center of element for the animation
+  const rect = el.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const topY = rect.top;
+
+  // Trigger floating click animation in the React overlay
+  window.postMessage({ 
+    type: 'TRIGGER_CLICK_ANIM', 
+    x: centerX, 
+    y: topY 
+  }, '*');
 }
 
 // --- Speech Recognition (STT) Setup ---

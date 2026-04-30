@@ -2,6 +2,10 @@ import { CompanionVoiceState } from '../shared/types';
 
 let currentState: CompanionVoiceState = CompanionVoiceState.IDLE;
 
+// --- Conversation History ---
+type Message = { role: 'user' | 'model'; parts: { text: string }[] };
+let messageHistory: Message[] = [];
+
 function setState(newState: CompanionVoiceState, tabId?: number) {
   currentState = newState;
   console.log(`State changed to: ${newState}`);
@@ -41,7 +45,11 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   const tabId = sender.tab?.id;
   if (!tabId) return;
 
-  if (message.type === 'PTT_START') {
+  if (message.type === 'RESET') {
+    messageHistory = [];
+    console.log(`Global history reset`);
+    return;
+  } else if (message.type === 'PTT_START') {
     startRecording(tabId);
   } else if (message.type === 'PTT_STOP') {
     stopRecording(tabId);
@@ -86,13 +94,47 @@ async function handleAIRequest(tabId: number, payload: { transcript: string, ele
       throw new Error('Gemini API Key not found. Please set VITE_GEMINI_API_KEY in your .env file or add it to chrome.storage.local under "GEMINI_API_KEY".');
     }
 
+    // Capture highly compressed screenshot for cost-effective visual context
+    let inlineDataPart = null;
+    try {
+      const screenshotDataUrl = await chrome.tabs.captureVisibleTab(
+        chrome.windows.WINDOW_ID_CURRENT, 
+        { format: 'jpeg', quality: 10 }
+      );
+      
+      if (screenshotDataUrl) {
+        // Extract mime type and base64 data from data URI: "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+        const match = screenshotDataUrl.match(/^data:(image\/[a-z]+);base64,(.*)$/);
+        if (match && match.length === 3) {
+           inlineDataPart = {
+             inlineData: {
+               mimeType: match[1],
+               data: match[2]
+             }
+           };
+           console.log(`Screenshot captured and compressed for AI (length: ${match[2].length} chars)`);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to capture screenshot:", e);
+    }
+
     // Prepare the prompt
-    const userPrompt = `
+    const userPromptText = `
 User Transcript: "${payload.transcript}"
 
 Available Interactive Elements on Screen:
 ${JSON.stringify(payload.elements, null, 2)}
     `.trim();
+    
+    const parts: any[] = [{ text: userPromptText }];
+    if (inlineDataPart) {
+        parts.push(inlineDataPart);
+    }
+    
+    const currentUserMessage: Message = { role: 'user', parts: parts };
+    
+    const contents = [...messageHistory, currentUserMessage];
 
     // Call Gemini API directly (Google AI, not Vertex)
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -101,9 +143,7 @@ ${JSON.stringify(payload.elements, null, 2)}
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [{ text: userPrompt }]
-        }],
+        contents: contents,
         system_instruction: {
           parts: [{ text: SYSTEM_PROMPT }]
         }
@@ -123,6 +163,15 @@ ${JSON.stringify(payload.elements, null, 2)}
     const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
     console.log('Received response from Gemini:', responseText);
+    
+    // Update history
+    messageHistory.push({ role: 'user', parts: [{ text: `User Transcript: "${payload.transcript}"` }] }); // Store only transcript to save tokens
+    messageHistory.push({ role: 'model', parts: [{ text: responseText }] });
+    
+    // Memory Limit: 10 items (5 turns)
+    if (messageHistory.length > 10) {
+      messageHistory = messageHistory.slice(-10);
+    }
     
     setState(CompanionVoiceState.RESPONDING, tabId);
 
