@@ -161,6 +161,51 @@ function annotateAndCollectElements() {
 }
 
 // --- Interaction Logic ---
+function typeIntoElement(clickyId: string, text: string) {
+  const el = document.querySelector(`[data-clicky-id="${clickyId}"]`) as HTMLElement;
+  if (!el) {
+    console.error(`Element with clicky-id ${clickyId} not found.`);
+    return;
+  }
+
+  console.log(`[Clicky] Typing into ${clickyId}: ${text}`);
+  
+  el.focus();
+  
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    // React 15/16 native value setter bypass to trigger state updates
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+    
+    if (el instanceof HTMLInputElement && nativeInputValueSetter) {
+        nativeInputValueSetter.call(el, text);
+    } else if (el instanceof HTMLTextAreaElement && nativeTextAreaValueSetter) {
+        nativeTextAreaValueSetter.call(el, text);
+    } else {
+        el.value = text;
+    }
+
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  } else if (el.isContentEditable) {
+    el.textContent = text;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // Visual feedback: brief blue glow
+  const originalBoxShadow = el.style.boxShadow;
+  const originalTransition = el.style.transition;
+  el.style.transition = 'all 0.3s ease-in-out';
+  el.style.boxShadow = '0 0 15px rgba(59, 130, 246, 0.8)'; // Blue glow
+  
+  setTimeout(() => {
+    el.style.boxShadow = originalBoxShadow;
+    setTimeout(() => {
+      el.style.transition = originalTransition;
+    }, 300);
+  }, 1500);
+}
+
 function highlightElement(clickyId: string) {
   const el = document.querySelector(`[data-clicky-id="${clickyId}"]`) as HTMLElement;
   if (!el) {
@@ -355,6 +400,14 @@ chrome.runtime.onMessage.addListener(async (message) => {
       highlightElement(match[1]);
       aiResponseBuffer = aiResponseBuffer.replace(match[0], '');
       clickRegex.lastIndex = 0;
+    }
+
+    // Extract Typing
+    const typeRegex = /\[TYPE:(el-\d+):(.*?)\]/g;
+    while ((match = typeRegex.exec(aiResponseBuffer)) !== null) {
+      typeIntoElement(match[1], match[2]);
+      aiResponseBuffer = aiResponseBuffer.replace(match[0], '');
+      typeRegex.lastIndex = 0;
     }
 
     // Extract Points (Bonus implementation)
