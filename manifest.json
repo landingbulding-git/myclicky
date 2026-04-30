@@ -3,7 +3,7 @@
   "name": "Clicky Copy",
   "version": "1.0.0",
   "description": "A Chrome extension inspired by Clicky for macOS.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": ["<all_urls>", "https://generativelanguage.googleapis.com/*"],
   "background": {
     "service_worker": "src/background/index.ts",

@@ -194,7 +194,7 @@ function highlightElement(clickyId: string) {
     chrome.runtime.sendMessage({ type: 'INTERACTION_COMPLETE' });
 
     // Provide immediate visual feedback to user
-    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Got it. Analyzing...' }, '*');
+    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Resuming guidance...' }, '*');
 
     // Wait 500ms for DOM changes
     setTimeout(() => {
@@ -284,7 +284,19 @@ function checkSpeechFinished() {
 
 // --- Background Message Listener ---
 chrome.runtime.onMessage.addListener(async (message) => {
-  if (message.type === 'START_RECORDING') {
+  if (message.type === 'RESUME_GOAL') {
+    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Resuming guidance...' }, '*');
+    setTimeout(() => {
+      const elements = annotateAndCollectElements();
+      chrome.runtime.sendMessage({
+        type: 'PROCESS_AI_REQUEST',
+        payload: {
+          transcript: `The page has loaded. I am still trying to: ${message.goal}. What is the next step?`,
+          elements: elements
+        }
+      });
+    }, 1000);
+  } else if (message.type === 'START_RECORDING') {
     currentTranscript = '';
     currentInterimTranscript = ''; // Reset interim
     window.speechSynthesis.cancel(); // Interrupt any ongoing TTS

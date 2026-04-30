@@ -5,6 +5,14 @@ let currentState: CompanionVoiceState = CompanionVoiceState.IDLE;
 // --- Conversation History ---
 type Message = { role: 'user' | 'model'; parts: { text: string }[] };
 let messageHistory: Message[] = [];
+let activeGoal: string | null = null;
+
+chrome.webNavigation.onCompleted.addListener((details) => {
+  if (details.frameId === 0 && activeGoal !== null) {
+    console.log(`[Clicky] Navigation completed. Resuming active goal: ${activeGoal}`);
+    chrome.tabs.sendMessage(details.tabId, { type: 'RESUME_GOAL', goal: activeGoal }).catch(() => {});
+  }
+});
 
 function setState(newState: CompanionVoiceState, tabId?: number) {
   currentState = newState;
@@ -76,6 +84,10 @@ Append technical commands for the plugin to the end of your response:
 
 ## Context Usage
 Use the received HTML structure and knowledge from YouTube/FAQ to guide the user on exactly what they should click to learn and achieve their goal. Do not assume you are clicking it for them.
+
+## Continuous Goal
+Continue guiding the user step-by-step through the provided HTML until the final objective is reached.
+If the user has achieved their final objective, append the tag [GOAL_REACHED] to your response.
 `;
 
 async function handleAIRequest(tabId: number, payload: { transcript: string, elements: any[] }) {
@@ -92,6 +104,11 @@ async function handleAIRequest(tabId: number, payload: { transcript: string, ele
     
     if (!apiKey) {
       throw new Error('Gemini API Key not found. Please set VITE_GEMINI_API_KEY in your .env file or add it to chrome.storage.local under "GEMINI_API_KEY".');
+    }
+
+    if (!activeGoal && payload.transcript && !payload.transcript.startsWith('The page has loaded.') && !payload.transcript.startsWith('I clicked it.')) {
+      activeGoal = payload.transcript;
+      console.log(`[Clicky] Active goal set: ${activeGoal}`);
     }
 
     // Capture highly compressed screenshot for cost-effective visual context
@@ -194,6 +211,11 @@ ${JSON.stringify(payload.elements, null, 2)}
     }
     
     console.log('Finished stream from Gemini:', fullResponseText);
+    
+    if (fullResponseText.includes('[GOAL_REACHED]')) {
+      activeGoal = null;
+      console.log('[Clicky] Goal reached. Active goal cleared.');
+    }
     
     // Update history
     messageHistory.push({ role: 'user', parts: [{ text: `User Transcript: "${payload.transcript}"` }] }); // Store only transcript to save tokens
