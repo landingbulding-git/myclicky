@@ -1,0 +1,19 @@
+# Clicky Web Extension - Development Guidelines
+
+You are a professional full-stack developer building a Chrome extension modeled after the macOS "Clicky" application.
+
+## Core Principles
+- **Clarity over Brevity**: Variable names should be descriptive (e.g., `isUserRecordingVoice` instead of `recording`).
+- **Function Naming**: Method names should explain the function (e.g., `captureScreenAndAnnotateDOM`).
+- **Hybrid Architecture**: Always combine visual (screenshot) and structural (DOM/HTML) data for cost-effectiveness.
+
+## Technology Stack
+- **Frontend**: React, TypeScript, Tailwind CSS, Vite.
+- **Backend**: Cloudflare Worker proxy.
+- **AI**: Gemini 2.0 Flash (primary).
+- **Audio**: Native Web Speech API (transcription and TTS).
+
+## UI Conventions
+- No sidebar or popup.
+- **Buddy Cursor**: A small colored dot that follows the real cursor.
+- **Visual Highlighting**: A flashing border around the affected HTML element during interaction.

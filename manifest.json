@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Clicky Copy",
+  "version": "1.0.0",
+  "description": "A Chrome extension inspired by Clicky for macOS.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["<all_urls>", "https://generativelanguage.googleapis.com/*"],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Clicky: Hold Ctrl+Alt+Space or click here!"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content/index.tsx"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "toggle-ptt": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Toggle Push-to-Talk"
+    }
+  }
+}
