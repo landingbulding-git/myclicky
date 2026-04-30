@@ -186,7 +186,7 @@ function highlightElement(clickyId: string) {
 
   // --- Auto-Follow Logic ---
   const autoFollowHandler = () => {
-    console.log('[Clicky] Auto-Follow: Element clicked. Triggering next AI turn in 500ms.');
+    console.log('[Clicky] Auto-Follow: Element clicked. Triggering next AI turn in 1000ms.');
     el.classList.remove('clicky-active-target');
     
     // Interrupt any ongoing speech
@@ -196,7 +196,7 @@ function highlightElement(clickyId: string) {
     // Provide immediate visual feedback to user
     window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Resuming guidance...' }, '*');
 
-    // Wait 500ms for DOM changes
+    // Wait 1000ms for DOM changes
     setTimeout(() => {
       // Simulate PTT_STOP by collecting elements and sending a synthetic transcript
       const elements = annotateAndCollectElements();
@@ -204,11 +204,11 @@ function highlightElement(clickyId: string) {
       chrome.runtime.sendMessage({
         type: 'PROCESS_AI_REQUEST',
         payload: {
-          transcript: "I clicked it. What should I do next?",
+          transcript: "I clicked it. What's next?",
           elements: elements
         }
       });
-    }, 500);
+    }, 1000);
   };
 
   // Attach a one-time listener to the highlighted element
@@ -291,7 +291,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
       chrome.runtime.sendMessage({
         type: 'PROCESS_AI_REQUEST',
         payload: {
-          transcript: `The page has loaded. I am still trying to: ${message.goal}. What is the next step?`,
+          transcript: `I am now on ${message.url || 'a new page'}. I am still trying to: ${message.goal}. What is the next step?`,
           elements: elements
         }
       });

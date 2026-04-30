@@ -85,9 +85,13 @@ Append technical commands for the plugin to the end of your response:
 ## Context Usage
 Use the received HTML structure and knowledge from YouTube/FAQ to guide the user on exactly what they should click to learn and achieve their goal. Do not assume you are clicking it for them.
 
+## Live Grounding & Verification
+You have access to live Google Search. Use it to find the current correct navigation steps for the website the user is on.
+Before suggesting a click, cross-reference the "ACTUAL STEPS FROM WEB" with the provided HTML list. If the button label in the guide matches a button on screen, use it. If not, explain that you are looking for it.
+
 ## Continuous Goal
 Continue guiding the user step-by-step through the provided HTML until the final objective is reached.
-If the user has achieved their final objective, append the tag [GOAL_REACHED] to your response.
+Only append [GOAL_REACHED] when the final success message or confirmation screen is visible on screen.
 `;
 
 async function handleAIRequest(tabId: number, payload: { transcript: string, elements: any[] }) {
@@ -116,7 +120,7 @@ async function handleAIRequest(tabId: number, payload: { transcript: string, ele
     try {
       const screenshotDataUrl = await chrome.tabs.captureVisibleTab(
         chrome.windows.WINDOW_ID_CURRENT, 
-        { format: 'jpeg', quality: 10 }
+        { format: 'jpeg', quality: 50 }
       );
       
       if (screenshotDataUrl) {
@@ -163,7 +167,8 @@ ${JSON.stringify(payload.elements, null, 2)}
         contents: contents,
         system_instruction: {
           parts: [{ text: SYSTEM_PROMPT }]
-        }
+        },
+        tools: [{ google_search: {} }]
       })
     });
 
