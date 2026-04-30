@@ -124,6 +124,20 @@ window.addEventListener('keyup', (event) => {
   }
 }, true);
 
+// --- Persistent Click Listener for Guided Elements ---
+document.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const dataClickyId = target.getAttribute('data-clicky-id');
+
+  if (dataClickyId) {
+    console.log(`[Clicky] User clicked element: ${dataClickyId}`);
+    chrome.runtime.sendMessage({
+      type: 'ELEMENT_CLICKED',
+      dataClickyId: dataClickyId
+    });
+  }
+}, true); // Use capture to detect clicks early
+
 // --- DOM Annotation Logic ---
 function isElementInViewport(el: Element) {
   const rect = el.getBoundingClientRect();
@@ -133,6 +147,70 @@ function isElementInViewport(el: Element) {
     rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
     rect.right <= (window.innerWidth || document.documentElement.clientWidth)
   );
+}
+
+function collectInteractiveElementsWithCoordinates() {
+  console.log('[Clicky] Collecting interactive elements with coordinates...');
+
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const centerX = viewportWidth / 2;
+  const centerY = viewportHeight / 2;
+
+  // Query all interactive elements
+  const elements = Array.from(
+    document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]')
+  );
+
+  let idCounter = 1;
+  const collected = [];
+
+  for (const el of elements) {
+    const rect = el.getBoundingClientRect();
+
+    // Skip if element has zero dimensions or is outside viewport
+    if (rect.width === 0 || rect.height === 0) continue;
+    if (rect.bottom < 0 || rect.top > viewportHeight) continue;
+    if (rect.right < 0 || rect.left > viewportWidth) continue;
+
+    // Get or create unique identifier
+    let dataClickyId = el.getAttribute('id');
+    if (!dataClickyId) {
+      dataClickyId = `clicky-${idCounter++}`;
+      el.setAttribute('data-clicky-id', dataClickyId);
+    }
+
+    // Calculate center coordinates
+    const elCenterX = Math.round(rect.left + rect.width / 2);
+    const elCenterY = Math.round(rect.top + rect.height / 2);
+
+    // Calculate distance from viewport center
+    const distance = Math.sqrt(
+      Math.pow(elCenterX - centerX, 2) + Math.pow(elCenterY - centerY, 2)
+    );
+
+    // Collect element data
+    const innerText = (el.textContent?.trim() || (el as HTMLInputElement).value || '').substring(0, 60);
+    const tagName = el.tagName.toLowerCase();
+    const type = (el as HTMLInputElement).type || '';
+
+    collected.push({
+      dataClickyId,
+      tagName,
+      type,
+      innerText,
+      centerX: elCenterX,
+      centerY: elCenterY,
+      distance
+    });
+  }
+
+  // Sort by distance from viewport center and cap at 40 elements
+  collected.sort((a, b) => a.distance - b.distance);
+  const capped = collected.slice(0, 40);
+
+  // Remove distance property from final output
+  return capped.map(({ distance, ...rest }) => rest);
 }
 
 function annotateAndCollectElements() {
@@ -462,5 +540,19 @@ chrome.runtime.onMessage.addListener(async (message) => {
     }
     aiResponseBuffer = '';
     checkSpeechFinished();
+  } else if (message.type === 'COLLECT_ELEMENTS_AND_CONTINUE') {
+    console.log('[Clicky] Collecting elements and continuing guidance...');
+    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Processing your action...' }, '*');
+
+    setTimeout(() => {
+      const elements = annotateAndCollectElements();
+      chrome.runtime.sendMessage({
+        type: 'PROCESS_AI_REQUEST',
+        payload: {
+          transcript: 'I clicked it. What is the next step?',
+          elements: elements
+        }
+      });
+    }, 500); // Small delay to allow any navigation or state changes
   }
 });

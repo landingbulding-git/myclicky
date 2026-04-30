@@ -1,0 +1,14 @@
+name = "clicky-proxy"
+main = "worker/src/index.ts"
+compatibility_date = "2025-01-01"
+
+# For local development, create worker/.dev.vars with:
+# ANTHROPIC_API_KEY=your-key-here
+#
+# For production, set the secret using:
+# npm run worker:secret ANTHROPIC_API_KEY
+#
+# Then paste your API key when prompted
+
+[vars]
+# Non-secret config vars go here if needed in the future

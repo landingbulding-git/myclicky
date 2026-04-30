@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "A Chrome extension inspired by Clicky for macOS.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
-  "host_permissions": ["<all_urls>", "https://generativelanguage.googleapis.com/*"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/background/index.ts",
     "type": "module"
@@ -27,5 +27,11 @@
       },
       "description": "Toggle Push-to-Talk"
     }
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["AI_SYSTEM_PROMPT.md"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

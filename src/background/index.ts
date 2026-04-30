@@ -1,11 +1,46 @@
 import { CompanionVoiceState } from '../shared/types';
 
+const WORKER_URL = import.meta.env.DEV
+  ? "http://localhost:8787"
+  : "https://clicky-proxy.norbertb-consulting.workers.dev/";
+
 let currentState: CompanionVoiceState = CompanionVoiceState.IDLE;
 
 // --- Conversation History ---
-type Message = { role: 'user' | 'model'; parts: { text: string }[] };
-let messageHistory: Message[] = [];
+type ClaudeMessage = {
+  role: "user" | "assistant";
+  content: string | Array<{ type: "text"; text: string } | { type: "image"; source: object }>;
+};
+
+let conversationHistory: ClaudeMessage[] = [];
 let currentActiveGoal: string | null = null;
+
+// --- Guidance State ---
+interface GuidanceState {
+  isGuidanceSessionActive: boolean;
+  currentGoalDescription: string;
+  currentStepNumber: number;
+  lastPointedElementDataClickyId: string | null;
+  lastResponseFromAI: string;
+}
+
+let currentGuidanceState: GuidanceState = {
+  isGuidanceSessionActive: false,
+  currentGoalDescription: "",
+  currentStepNumber: 0,
+  lastPointedElementDataClickyId: null,
+  lastResponseFromAI: "",
+};
+
+// Cache for system prompt
+let AI_SYSTEM_PROMPT: string | null = null;
+
+async function getSystemPrompt(): Promise<string> {
+  if (!AI_SYSTEM_PROMPT) {
+    AI_SYSTEM_PROMPT = await fetch(chrome.runtime.getURL('AI_SYSTEM_PROMPT.md')).then(r => r.text());
+  }
+  return AI_SYSTEM_PROMPT;
+}
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId === 0 && currentActiveGoal !== null) {
@@ -70,8 +105,15 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (!tabId) return;
 
   if (message.type === 'RESET') {
-    messageHistory = [];
-    console.log(`Global history reset`);
+    conversationHistory = [];
+    currentGuidanceState = {
+      isGuidanceSessionActive: false,
+      currentGoalDescription: "",
+      currentStepNumber: 0,
+      lastPointedElementDataClickyId: null,
+      lastResponseFromAI: "",
+    };
+    console.log(`Conversation history and guidance state reset`);
     return;
   } else if (message.type === 'GET_STATUS') {
     chrome.tabs.sendMessage(tabId, {
@@ -87,126 +129,98 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     handleAIRequest(tabId, message.payload);
   } else if (message.type === 'INTERACTION_COMPLETE') {
     setState(CompanionVoiceState.IDLE, tabId);
+  } else if (message.type === 'ELEMENT_CLICKED') {
+    if (currentGuidanceState.isGuidanceSessionActive) {
+      console.log(`[Clicky] Element clicked: ${message.dataClickyId}`);
+      currentGuidanceState.lastPointedElementDataClickyId = message.dataClickyId;
+      currentGuidanceState.currentStepNumber++;
+
+      // Trigger next AI turn with context about the click
+      setState(CompanionVoiceState.PROCESSING, tabId);
+      chrome.tabs.sendMessage(tabId, { type: 'COLLECT_ELEMENTS_AND_CONTINUE' }).catch(() => {});
+    }
   }
 });
 
-const SYSTEM_PROMPT = `
-You are Clicky, a friendly and helpful AI companion. The user sees you in their browser.
+async function captureVisibleTabScreenshot(tabId: number): Promise<string | null> {
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(undefined, {
+      format: 'jpeg',
+      quality: 60
+    });
 
-## Communication Rules
-- Always write in lowercase, in a direct and warm style.
-- Give short, 1-2 sentence answers.
-- Avoid lists and markdown formatting in speech.
-
-## Proactive Teaching
-- **Explain Why**: Don't just say 'Click here.' Say 'Click here to open the security settings where the password field is hidden'.
-- **One Step Priority**: Strictly enforce the 'One Step at a Time' rule. The AI must never list 5 steps; it points to the first one and waits for the persistent listener to trigger the next turn.
-- **Anticipate Friction**: If the user is on a slow-loading site like Facebook, instruct the AI to acknowledge the load time.
-
-## Navigation Commands
-Append technical commands for the plugin to the end of your response:
-- **Pointing**: \`[POINT:x,y:label]\` - if you just want to show something.
-- **Highlighting**: \`[CLICK:data-clicky-id:label]\` - to highlight the element the user needs to click. Explain what they need to do.
-- **Typing**: \`[TYPE:data-clicky-id:text to type]\` - to type the generated text into an input field or textarea.
-- **Waiting**: If the process consists of multiple steps, only explain ONE step at a time, highlight the element, and wait for the user to click it.
-
-## Context Usage
-Use the received HTML structure and knowledge from YouTube/FAQ to guide the user on exactly what they should click to learn and achieve their goal. Do not assume you are clicking it for them.
-
-## Live Grounding & Verification
-You have access to live Google Search. Use it to find the current correct navigation steps for the website the user is on.
-Before suggesting a click, cross-reference the "ACTUAL STEPS FROM WEB" with the provided HTML list. If the button label in the guide matches a button on screen, use it. If not, explain that you are looking for it.
-
-## Continuous Goal
-Continue guiding the user step-by-step through the provided HTML until the final objective is reached.
-Only append [GOAL_REACHED] when the final success message or confirmation screen is visible on screen.
-`;
+    // Strip the "data:image/jpeg;base64," prefix
+    const base64String = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+    return base64String;
+  } catch (error) {
+    // Silently fail on chrome:// pages or other restricted contexts
+    return null;
+  }
+}
 
 async function handleAIRequest(tabId: number, payload: { transcript: string, elements: any[] }) {
-  console.log('Processing AI request directly with Gemini API...', payload);
+  console.log('Processing AI request via Claude API...', payload);
   
   try {
-    // Get API Key from environment or storage
-    let apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
-    
-    if (!apiKey) {
-      const storage = await chrome.storage.local.get('GEMINI_API_KEY');
-      apiKey = storage.GEMINI_API_KEY;
-    }
-    
-    if (!apiKey) {
-      throw new Error('Gemini API Key not found. Please set VITE_GEMINI_API_KEY in your .env file or add it to chrome.storage.local under "GEMINI_API_KEY".');
-    }
-
     if (!currentActiveGoal && payload.transcript && !payload.transcript.startsWith('The page has loaded.') && !payload.transcript.startsWith('I clicked it.')) {
       currentActiveGoal = payload.transcript;
+      currentGuidanceState.isGuidanceSessionActive = true;
+      currentGuidanceState.currentGoalDescription = payload.transcript;
+      currentGuidanceState.currentStepNumber = 1;
       console.log(`[Clicky] Active goal set: ${currentActiveGoal}`);
     }
 
-    // Capture highly compressed screenshot for cost-effective visual context
-    let inlineDataPart = null;
-    try {
-      const screenshotDataUrl = await chrome.tabs.captureVisibleTab(
-        chrome.windows.WINDOW_ID_CURRENT, 
-        { format: 'jpeg', quality: 50 }
-      );
-      
-      if (screenshotDataUrl) {
-        // Extract mime type and base64 data from data URI: "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
-        const match = screenshotDataUrl.match(/^data:(image\/[a-z]+);base64,(.*)$/);
-        if (match && match.length === 3) {
-           inlineDataPart = {
-             inlineData: {
-               mimeType: match[1],
-               data: match[2]
-             }
-           };
-           console.log(`Screenshot captured and compressed for AI (length: ${match[2].length} chars)`);
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to capture screenshot:", e);
-    }
-
-    // Prepare the prompt
-    const userPromptText = `
-User Transcript: "${payload.transcript}"
+    const userPromptText = `User Transcript: "${payload.transcript}"
 
 Available Interactive Elements on Screen:
-${JSON.stringify(payload.elements, null, 2)}
-    `.trim();
-    
-    const parts: any[] = [{ text: userPromptText }];
-    if (inlineDataPart) {
-        parts.push(inlineDataPart);
-    }
-    
-    const currentUserMessage: Message = { role: 'user', parts: parts };
-    
-    const contents = [...messageHistory, currentUserMessage];
+${JSON.stringify(payload.elements, null, 2)}`.trim();
 
-    // Call Gemini API directly (Google AI, not Vertex)
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
-    
+    // Capture screenshot
+    const screenshot = await captureVisibleTabScreenshot(tabId);
+
+    // Build message content
+    let messageContent: ClaudeMessage['content'];
+    if (screenshot) {
+      messageContent = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/jpeg',
+            data: screenshot
+          }
+        },
+        {
+          type: 'text',
+          text: userPromptText
+        }
+      ];
+    } else {
+      messageContent = userPromptText;
+    }
+
+    // Add user message to conversation history
+    conversationHistory.push({ role: 'user', content: messageContent });
+
+    const apiUrl = WORKER_URL;
+    const systemPrompt = await getSystemPrompt();
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: contents,
-        system_instruction: {
-          parts: [{ text: SYSTEM_PROMPT }]
-        },
-        tools: [{ google_search: {} }]
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: conversationHistory,
+        stream: true,
       })
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Gemini API Error:', errorData);
-      if (response.status === 429) {
-        throw new Error('Too many requests. Your Gemini API quota might be exhausted.');
-      }
-      throw new Error(`Gemini API error: ${response.statusText}`);
+      const errorData = await response.text();
+      console.error('Claude API Error:', errorData);
+      throw new Error(`Claude API error: ${response.statusText} - ${errorData}`);
     }
 
     setState(CompanionVoiceState.RESPONDING, tabId);
@@ -214,21 +228,28 @@ ${JSON.stringify(payload.elements, null, 2)}
     const reader = response.body?.getReader();
     const decoder = new TextDecoder("utf-8");
     let fullResponseText = '';
+    let buffer = '';
 
     if (reader) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += chunk;
+        const lines = buffer.split('\n');
+
+        // Keep the last line in buffer (might be incomplete)
+        buffer = lines.pop() || '';
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const dataStr = line.substring(6);
-            if (dataStr.trim() === '[DONE]') continue;
+            const dataStr = line.substring(6).trim();
+            if (!dataStr || dataStr === '[DONE]') continue;
             try {
               const data = JSON.parse(dataStr);
-              const textChunk = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-              if (textChunk) {
+              if (data.type === 'content_block_delta' && data.delta.type === 'text_delta') {
+                const textChunk = data.delta.text;
                 fullResponseText += textChunk;
                 chrome.tabs.sendMessage(tabId, {
                   type: 'AI_CHUNK',
@@ -236,40 +257,47 @@ ${JSON.stringify(payload.elements, null, 2)}
                 }).catch(() => {});
               }
             } catch (e) {
-              console.error('Error parsing stream chunk:', e);
+              if (dataStr) {
+                console.error('Error parsing stream chunk:', dataStr, e);
+              }
             }
           }
         }
       }
     }
     
-    console.log('Finished stream from Gemini:', fullResponseText);
-    
+    console.log('Finished stream from Claude:', fullResponseText);
+
+    // Update guidance state with last AI response
+    currentGuidanceState.lastResponseFromAI = fullResponseText;
+
     if (fullResponseText.includes('[GOAL_REACHED]')) {
       currentActiveGoal = null;
-      console.log('[Clicky] Goal reached. Active goal cleared.');
+      // Reset guidance state
+      currentGuidanceState.isGuidanceSessionActive = false;
+      currentGuidanceState.currentGoalDescription = "";
+      currentGuidanceState.currentStepNumber = 0;
+      currentGuidanceState.lastPointedElementDataClickyId = null;
+      console.log('[Clicky] Goal reached. Guidance session ended.');
+    }
+
+    // Add assistant response to conversation history
+    conversationHistory.push({ role: 'assistant', content: fullResponseText });
+
+    // Keep conversation history manageable (last 10 messages = 5 turns)
+    if (conversationHistory.length > 10) {
+      conversationHistory = conversationHistory.slice(-10);
     }
     
-    // Update history
-    messageHistory.push({ role: 'user', parts: [{ text: `User Transcript: "${payload.transcript}"` }] }); // Store only transcript to save tokens
-    messageHistory.push({ role: 'model', parts: [{ text: fullResponseText }] });
-    
-    // Memory Limit: 10 items (5 turns)
-    if (messageHistory.length > 10) {
-      messageHistory = messageHistory.slice(-10);
-    }
-    
-    // Send stream done message
     chrome.tabs.sendMessage(tabId, { type: 'AI_STREAM_DONE' }).catch(() => {});
 
   } catch (error: any) {
     console.error('Error processing AI request:', error);
     setState(CompanionVoiceState.RESPONDING, tabId);
     
-    // Provide user feedback on error
     chrome.tabs.sendMessage(tabId, {
       type: 'EXECUTE_AI_RESPONSE',
-      responseText: error.message || 'Sorry, something went wrong while talking to Gemini.'
+      responseText: error.message || 'Sorry, something went wrong while talking to Claude.'
     });
   }
 }

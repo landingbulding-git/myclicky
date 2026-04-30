@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "worker:secret": "wrangler secret put",
+    "worker:tail": "wrangler tail"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.4.0",
@@ -15,7 +19,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^5.3.3",
-    "vite": "^5.0.10"
+    "vite": "^5.0.10",
+    "wrangler": "^4.87.0"
   },
   "dependencies": {
     "react": "^19.2.5",
