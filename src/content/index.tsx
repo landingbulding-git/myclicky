@@ -186,7 +186,7 @@ function highlightElement(clickyId: string) {
 
   // --- Auto-Follow Logic ---
   const autoFollowHandler = () => {
-    console.log('[Clicky] Auto-Follow: Element clicked. Triggering next AI turn.');
+    console.log('[Clicky] Auto-Follow: Element clicked. Triggering next AI turn in 500ms.');
     el.classList.remove('clicky-active-target');
     
     // Interrupt any ongoing speech
@@ -196,16 +196,19 @@ function highlightElement(clickyId: string) {
     // Provide immediate visual feedback to user
     window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Got it. Analyzing...' }, '*');
 
-    // Simulate PTT_STOP by collecting elements and sending a synthetic transcript
-    const elements = annotateAndCollectElements();
-    
-    chrome.runtime.sendMessage({
-      type: 'PROCESS_AI_REQUEST',
-      payload: {
-        transcript: "I clicked it. What should I do next?",
-        elements: elements
-      }
-    });
+    // Wait 500ms for DOM changes
+    setTimeout(() => {
+      // Simulate PTT_STOP by collecting elements and sending a synthetic transcript
+      const elements = annotateAndCollectElements();
+      
+      chrome.runtime.sendMessage({
+        type: 'PROCESS_AI_REQUEST',
+        payload: {
+          transcript: "I clicked it. What should I do next?",
+          elements: elements
+        }
+      });
+    }, 500);
   };
 
   // Attach a one-time listener to the highlighted element
@@ -262,6 +265,12 @@ let fullCleanDisplayText = '';
 function speakSentence(text: string) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'en-US';
+  utterance.onstart = () => {
+    window.postMessage({ type: 'SPEECH_START' }, '*');
+  };
+  utterance.onend = () => {
+    window.postMessage({ type: 'SPEECH_END' }, '*');
+  };
   window.speechSynthesis.speak(utterance);
 }
 

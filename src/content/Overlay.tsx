@@ -10,6 +10,7 @@ export const Overlay = () => {
   const [animations, setAnimations] = useState<{ id: number; x: number; y: number }[]>([]);
   const [isInteractionLocked, setIsInteractionLocked] = useState(false);
   const [targetPosition, setTargetPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -51,6 +52,10 @@ export const Overlay = () => {
           setIsInteractionLocked(false);
           setTargetPosition(null);
         }, 1000); // 1 second animation
+      } else if (event.data && event.data.type === 'SPEECH_START') {
+        setIsSpeaking(true);
+      } else if (event.data && event.data.type === 'SPEECH_END') {
+        setIsSpeaking(false);
       }
     };
 
@@ -61,11 +66,21 @@ export const Overlay = () => {
   // Determine styles based on state
   const isActive = voiceState !== CompanionVoiceState.IDLE || isInteractionLocked;
   let dotColor = 'rgba(128, 128, 128, 0.5)';
+  let dotShadow = '0 0 8px rgba(0,0,0,0.3)';
   
-  if (isInteractionLocked) dotColor = '#3b82f6'; // Blue when highlighting/animating
-  else if (voiceState === CompanionVoiceState.LISTENING) dotColor = '#ef4444'; // Red
-  else if (voiceState === CompanionVoiceState.PROCESSING) dotColor = '#eab308'; // Yellow
-  else if (voiceState === CompanionVoiceState.RESPONDING) dotColor = '#22c55e'; // Green
+  if (isInteractionLocked) {
+    dotColor = '#3b82f6'; // Blue when highlighting/animating
+    dotShadow = '0 0 15px 5px rgba(59, 130, 246, 0.6)';
+  } else if (isSpeaking) {
+    dotColor = '#3b82f6'; // Blue when speaking
+    dotShadow = '0 0 15px 8px rgba(59, 130, 246, 0.8)'; // Stronger blue pulse
+  } else if (voiceState === CompanionVoiceState.LISTENING) {
+    dotColor = '#ef4444'; // Red
+  } else if (voiceState === CompanionVoiceState.PROCESSING) {
+    dotColor = '#eab308'; // Yellow
+  } else if (voiceState === CompanionVoiceState.RESPONDING) {
+    dotColor = '#22c55e'; // Green
+  }
 
   if (!isActive && !bubbleText && animations.length === 0) return null;
 
@@ -91,10 +106,12 @@ export const Overlay = () => {
           height: '12px',
           borderRadius: '50%',
           backgroundColor: dotColor,
-          boxShadow: isInteractionLocked ? '0 0 15px 5px rgba(59, 130, 246, 0.6)' : '0 0 8px rgba(0,0,0,0.3)',
+          boxShadow: dotShadow,
+          transform: isSpeaking && !isInteractionLocked ? 'scale(1.5)' : 'scale(1)',
           transition: isInteractionLocked 
-            ? 'left 0.8s cubic-bezier(0.33, 1, 0.68, 1), top 0.8s cubic-bezier(0.32, 0, 0.67, 0), background-color 0.3s ease, box-shadow 0.3s ease'
-            : 'left 0.1s linear, top 0.1s linear, background-color 0.3s ease, box-shadow 0.3s ease',
+            ? 'all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)' // Springy flight
+            : 'left 0.1s linear, top 0.1s linear, background-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease-in-out',
+          zIndex: 1, // Below Klikk animation
         }}
       />
 
@@ -115,6 +132,7 @@ export const Overlay = () => {
             whiteSpace: 'nowrap',
             boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
             opacity: 0.9,
+            zIndex: 2,
           }}
         >
           {bubbleText}
@@ -139,7 +157,8 @@ export const Overlay = () => {
             fontFamily: 'system-ui, -apple-system, sans-serif',
             boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
             animation: 'floatUpFade 1s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-            pointerEvents: 'none'
+            pointerEvents: 'none',
+            zIndex: 3, // Highest layer
           }}
         >
           Klikk!
