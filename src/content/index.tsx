@@ -177,12 +177,39 @@ function highlightElement(clickyId: string) {
   const centerX = rect.left + rect.width / 2;
   const topY = rect.top;
 
-  // Trigger floating click animation in the React overlay
+  // Trigger floating click animation and Bezier flight in the React overlay
   window.postMessage({ 
     type: 'TRIGGER_CLICK_ANIM', 
     x: centerX, 
     y: topY 
   }, '*');
+
+  // --- Auto-Follow Logic ---
+  const autoFollowHandler = () => {
+    console.log('[Clicky] Auto-Follow: Element clicked. Triggering next AI turn.');
+    el.classList.remove('clicky-active-target');
+    
+    // Interrupt any ongoing speech
+    window.speechSynthesis.cancel();
+    chrome.runtime.sendMessage({ type: 'INTERACTION_COMPLETE' });
+
+    // Provide immediate visual feedback to user
+    window.postMessage({ type: 'SHOW_BUBBLE_TEXT', text: 'Got it. Analyzing...' }, '*');
+
+    // Simulate PTT_STOP by collecting elements and sending a synthetic transcript
+    const elements = annotateAndCollectElements();
+    
+    chrome.runtime.sendMessage({
+      type: 'PROCESS_AI_REQUEST',
+      payload: {
+        transcript: "I clicked it. What should I do next?",
+        elements: elements
+      }
+    });
+  };
+
+  // Attach a one-time listener to the highlighted element
+  el.addEventListener('click', autoFollowHandler, { once: true });
 }
 
 // --- Speech Recognition (STT) Setup ---

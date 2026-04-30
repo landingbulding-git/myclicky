@@ -9,6 +9,7 @@ export const Overlay = () => {
   // Animation state
   const [animations, setAnimations] = useState<{ id: number; x: number; y: number }[]>([]);
   const [isInteractionLocked, setIsInteractionLocked] = useState(false);
+  const [targetPosition, setTargetPosition] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -43,10 +44,12 @@ export const Overlay = () => {
         const id = Date.now();
         setAnimations((prev) => [...prev, { id, x: event.data.x, y: event.data.y }]);
         setIsInteractionLocked(true);
+        setTargetPosition({ x: event.data.x, y: event.data.y });
 
         setTimeout(() => {
           setAnimations((prev) => prev.filter(anim => anim.id !== id));
           setIsInteractionLocked(false);
+          setTargetPosition(null);
         }, 1000); // 1 second animation
       }
     };
@@ -82,14 +85,16 @@ export const Overlay = () => {
       <div
         style={{
           position: 'absolute',
-          left: position.x + 15, // Offset from actual cursor
-          top: position.y + 15,
+          left: isInteractionLocked && targetPosition ? targetPosition.x : position.x + 15, // Offset from actual cursor
+          top: isInteractionLocked && targetPosition ? targetPosition.y : position.y + 15,
           width: '12px',
           height: '12px',
           borderRadius: '50%',
           backgroundColor: dotColor,
-          boxShadow: '0 0 8px rgba(0,0,0,0.3)',
-          transition: 'background-color 0.3s ease',
+          boxShadow: isInteractionLocked ? '0 0 15px 5px rgba(59, 130, 246, 0.6)' : '0 0 8px rgba(0,0,0,0.3)',
+          transition: isInteractionLocked 
+            ? 'left 0.8s cubic-bezier(0.33, 1, 0.68, 1), top 0.8s cubic-bezier(0.32, 0, 0.67, 0), background-color 0.3s ease, box-shadow 0.3s ease'
+            : 'left 0.1s linear, top 0.1s linear, background-color 0.3s ease, box-shadow 0.3s ease',
         }}
       />
 
