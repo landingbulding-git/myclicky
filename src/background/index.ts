@@ -5,12 +5,28 @@ let currentState: CompanionVoiceState = CompanionVoiceState.IDLE;
 // --- Conversation History ---
 type Message = { role: 'user' | 'model'; parts: { text: string }[] };
 let messageHistory: Message[] = [];
-let activeGoal: string | null = null;
+let currentActiveGoal: string | null = null;
+
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId === 0 && currentActiveGoal !== null) {
+    console.log(`[Clicky] Navigation starting. Keeping Buddy in thinking state.`);
+    setState(CompanionVoiceState.PROCESSING, details.tabId);
+  }
+});
 
 chrome.webNavigation.onCompleted.addListener((details) => {
-  if (details.frameId === 0 && activeGoal !== null) {
-    console.log(`[Clicky] Navigation completed. Resuming active goal: ${activeGoal}`);
-    chrome.tabs.sendMessage(details.tabId, { type: 'RESUME_GOAL', goal: activeGoal }).catch(() => {});
+  if (details.frameId === 0 && currentActiveGoal !== null) {
+    console.log(`[Clicky] Navigation completed. Waiting 1.5s for DOM to settle...`);
+    setState(CompanionVoiceState.PROCESSING, details.tabId); // Ensure 'Thinking' state on new page
+    
+    setTimeout(() => {
+      console.log(`[Clicky] Resuming active goal: ${currentActiveGoal}`);
+      chrome.tabs.sendMessage(details.tabId, { 
+        type: 'RESUME_GOAL', 
+        goal: currentActiveGoal,
+        url: details.url
+      }).catch(() => {});
+    }, 1500);
   }
 });
 
@@ -56,6 +72,12 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === 'RESET') {
     messageHistory = [];
     console.log(`Global history reset`);
+    return;
+  } else if (message.type === 'GET_STATUS') {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'VOICE_STATE_CHANGED',
+      state: currentState
+    }).catch(() => {});
     return;
   } else if (message.type === 'PTT_START') {
     startRecording(tabId);
@@ -111,9 +133,9 @@ async function handleAIRequest(tabId: number, payload: { transcript: string, ele
       throw new Error('Gemini API Key not found. Please set VITE_GEMINI_API_KEY in your .env file or add it to chrome.storage.local under "GEMINI_API_KEY".');
     }
 
-    if (!activeGoal && payload.transcript && !payload.transcript.startsWith('The page has loaded.') && !payload.transcript.startsWith('I clicked it.')) {
-      activeGoal = payload.transcript;
-      console.log(`[Clicky] Active goal set: ${activeGoal}`);
+    if (!currentActiveGoal && payload.transcript && !payload.transcript.startsWith('The page has loaded.') && !payload.transcript.startsWith('I clicked it.')) {
+      currentActiveGoal = payload.transcript;
+      console.log(`[Clicky] Active goal set: ${currentActiveGoal}`);
     }
 
     // Capture highly compressed screenshot for cost-effective visual context
@@ -219,7 +241,7 @@ ${JSON.stringify(payload.elements, null, 2)}
     console.log('Finished stream from Gemini:', fullResponseText);
     
     if (fullResponseText.includes('[GOAL_REACHED]')) {
-      activeGoal = null;
+      currentActiveGoal = null;
       console.log('[Clicky] Goal reached. Active goal cleared.');
     }
     

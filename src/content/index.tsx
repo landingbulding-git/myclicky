@@ -81,9 +81,13 @@ function injectReactApp() {
 
 // Ensure DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectReactApp);
+  document.addEventListener('DOMContentLoaded', () => {
+    injectReactApp();
+    chrome.runtime.sendMessage({ type: 'GET_STATUS' });
+  });
 } else {
   injectReactApp();
+  chrome.runtime.sendMessage({ type: 'GET_STATUS' });
 }
 
 // --- PTT Logic ---
@@ -340,7 +344,7 @@ chrome.runtime.onMessage.addListener(async (message) => {
           elements: elements
         }
       });
-    }, 1000);
+    }, 100); // Quick delay to ensure everything is ready
   } else if (message.type === 'START_RECORDING') {
     currentTranscript = '';
     currentInterimTranscript = ''; // Reset interim
